@@ -280,7 +280,7 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
     }
     $msgFile = Join-Path $env:TEMP ('gitmsg_' + [guid]::NewGuid().ToString('N') + '.txt')
     [System.IO.File]::WriteAllText($msgFile, $msg, (New-Object System.Text.UTF8Encoding($false)))
-    & git -C $repo commit -F $msgFile 2>&1
+    & git -C $repo commit -F $msgFile
     Remove-Item $msgFile -Force -ErrorAction SilentlyContinue
 
     $remote = (& git -C $repo config --get remote.origin.url 2>$null)
@@ -293,9 +293,9 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
         $branch = (& git -C $repo rev-parse --abbrev-ref HEAD 2>$null)
         & git -C $repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            & git -C $repo push -u origin $branch 2>&1
+            & git -C $repo push -u origin $branch
         } else {
-            & git -C $repo push 2>&1
+            & git -C $repo push
         }
     }
     $hash = (& git -C $repo rev-parse --short HEAD 2>$null)
