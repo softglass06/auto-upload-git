@@ -1,0 +1,48 @@
+# ---- directories to skip (trailing / means the whole directory) ----
+node_modules/
+__pycache__/
+.git/
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+dist/
+build/
+out/
+coverage/
+.next/
+.nuxt/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+target/
+.eggs/
+*.egg-info/
+# ---- test / spec directories ----
+test/
+tests/
+__tests__/
+spec/
+specs/
+testdata/
+fixtures/
+# ---- test / spec files ----
+*.test.*
+*.spec.*
+*_test.*
+*_spec.*
+test_*.py
+*_test.py
+# ---- build artifacts / logs / temp ----
+*.pyc
+*.pyo
+*.class
+*.o
+*.log
+*.tmp
+*.bak
+*.swp
+*.DS_Store
+Thumbs.db
