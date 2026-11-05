@@ -15,7 +15,11 @@
 #  line. Do NOT add non-ASCII characters to this file.
 # ============================================================
 
-$ErrorActionPreference = 'Stop'
+# 'Stop' would turn ANY stderr from native commands (git/claude) into a
+# terminating NativeCommandError - even with 2>$null - so a harmless git
+# "LF will be replaced by CRLF" warning aborts the script mid-run. Use
+# 'Continue'; git success/failure is checked via $LASTEXITCODE below.
+$ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
