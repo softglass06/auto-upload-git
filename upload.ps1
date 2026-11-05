@@ -22,7 +22,9 @@
 $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = ''
+if ($MyInvocation.MyCommand.Path) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
 $reposFile = Join-Path $scriptDir 'repos.txt'
 $rulesFile = Join-Path $scriptDir 'filter-rules.txt'
 
@@ -89,6 +91,19 @@ function Get-Rules {
             if ($l -eq '' -or $l.StartsWith('#')) { continue }
             $rules += $l
         }
+    }
+    if ($rules.Count -eq 0) {
+        # Built-in defaults so a standalone .exe works without filter-rules.txt.
+        $rules = @(
+            'node_modules/', '__pycache__/', '.git/', '.venv/', 'venv/', 'env/',
+            '.idea/', '.vscode/', 'dist/', 'build/', 'out/', 'coverage/',
+            '.next/', '.nuxt/', '.pytest_cache/', '.mypy_cache/', '.ruff_cache/',
+            '.cache/', 'target/', '.eggs/', '*.egg-info/',
+            'test/', 'tests/', '__tests__/', 'spec/', 'specs/', 'testdata/', 'fixtures/',
+            '*.test.*', '*.spec.*', '*_test.*', '*_spec.*', 'test_*.py', '*_test.py',
+            '*.pyc', '*.pyo', '*.class', '*.o', '*.log', '*.tmp', '*.bak', '*.swp',
+            '*.DS_Store', 'Thumbs.db'
+        )
     }
     return $rules
 }
