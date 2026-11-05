@@ -281,7 +281,13 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
     $msgFile = Join-Path $env:TEMP ('gitmsg_' + [guid]::NewGuid().ToString('N') + '.txt')
     [System.IO.File]::WriteAllText($msgFile, $msg, (New-Object System.Text.UTF8Encoding($false)))
     & git -C $repo commit -F $msgFile
+    $commitCode = $LASTEXITCODE
     Remove-Item $msgFile -Force -ErrorAction SilentlyContinue
+
+    if ($commitCode -ne 0) {
+        Fail ("Commit failed (git exit code " + $commitCode + "). Nothing was uploaded.")
+        return
+    }
 
     $remote = (& git -C $repo config --get remote.origin.url 2>$null)
     if (-not $remote) {
@@ -296,6 +302,11 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
             & git -C $repo push -u origin $branch
         } else {
             & git -C $repo push
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Warn ("Push FAILED (git exit code " + $LASTEXITCODE + "). Commit created locally but NOT uploaded.")
+            Info "Common causes: remote repo is not empty, or you lack push permission."
+            return
         }
     }
     $hash = (& git -C $repo rev-parse --short HEAD 2>$null)
