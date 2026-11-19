@@ -108,6 +108,23 @@ function Get-Rules {
     return $rules
 }
 
+# ---- read the source folder's .gitignore (best-effort, no '!' negation) ----
+function Get-GitIgnorePatterns([string]$root) {
+    $pat = New-Object System.Collections.Generic.List[string]
+    $gi = Join-Path $root '.gitignore'
+    if (Test-Path -LiteralPath $gi) {
+        foreach ($line in Get-Content -LiteralPath $gi -Encoding UTF8) {
+            $l = $line.Trim()
+            if ($l -eq '' -or $l.StartsWith('#')) { continue }
+            if ($l.StartsWith('!')) { continue }   # negation is not supported
+            $l = $l -replace '\\', '/'
+            if ($l.StartsWith('/')) { $l = $l.Substring(1) }
+            if ($l) { $pat.Add($l) }
+        }
+    }
+    return $pat
+}
+
 # ---- true if a directory NAME should not be recursed into ----
 function Test-DirSkipped([string]$name, [string[]]$rules) {
     foreach ($r in $rules) {
@@ -168,15 +185,16 @@ function Get-Changed([string]$repo, [string]$scope) {
     $gitArgs = @('-c', 'core.quotepath=false', 'status', '--porcelain=v1', '--untracked-files=all')
     if ($scope -and $scope -ne '.') { $gitArgs += @('--', $scope) } else { $gitArgs += @('--', '.') }
     $lines = & git -C $repo @gitArgs 2>$null
-    $out = New-Object System.Collections.Generic.List[string]
+    $out = New-Object System.Collections.Generic.List[object]
     foreach ($line in $lines) {
         if ($line -isnot [string]) { continue }
         if ($line.Length -lt 4) { continue }
+        $status = $line.Substring(0, 2)
         $p = $line.Substring(3)
         $idx = $p.IndexOf(' -> ')
         if ($idx -ge 0) { $p = $p.Substring($idx + 4) }
         $p = $p.Trim()
-        if ($p) { $out.Add(($p -replace '\\', '/')) }
+        if ($p) { $out.Add([pscustomobject]@{ Status = $status; Path = ($p -replace '\\', '/') }) }
     }
     return $out
 }
@@ -348,9 +366,10 @@ function Process-Folder([string]$folder, $repos, [string[]]$rules) {
     $mode = $target.Mode
 
     if ($mode -eq 'copy') {
-        $allFiles = Get-Files $folder $rules
+        $srcRules = @($rules) + @(Get-GitIgnorePatterns $folder)
+        $allFiles = Get-Files $folder $srcRules
         $included = @(); $excluded = @()
-        foreach ($f in $allFiles) { if (Match-Rule $f.Rel $rules) { $excluded += $f } else { $included += $f } }
+        foreach ($f in $allFiles) { if (Match-Rule $f.Rel $srcRules) { $excluded += $f } else { $included += $f } }
         Info ("Mode : copy -> " + $target.Dest)
         Info ("Core files to upload : " + $included.Count + "   |   Skipped (test/build) : " + $excluded.Count)
         $shown = [Math]::Min(30, $excluded.Count)
@@ -374,7 +393,11 @@ function Process-Folder([string]$folder, $repos, [string[]]$rules) {
         $scope = $target.Scope
         $changed = Get-Changed $repo $scope
         $commitPaths = @(); $skipPaths = @()
-        foreach ($c in $changed) { if (Match-Rule $c $rules) { $skipPaths += $c } else { $commitPaths += $c } }
+        foreach ($c in $changed) {
+            $isUntracked = ($c.Status -eq '??')
+            if ($isUntracked -and (Match-Rule $c.Path $rules)) { $skipPaths += $c.Path }
+            else { $commitPaths += $c.Path }
+        }
         $scopeLabel = $(if ($scope -and $scope -ne '.') { $scope } else { '<repo root>' })
         Info ("Mode : in-place in " + $repo + "  (scope: " + $scopeLabel + ")")
         Info ("Changed files to commit : " + $commitPaths.Count + "   |   Skipped (test/build) : " + $skipPaths.Count)
