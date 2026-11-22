@@ -20,15 +20,7 @@ coverage/
 target/
 .eggs/
 *.egg-info/
-# ---- test / spec directories ----
-test/
-tests/
-__tests__/
-spec/
-specs/
-testdata/
-fixtures/
-# ---- test / spec files ----
+# ---- test / spec files (只过滤文件,不再跳过整个 test/tests/spec 目录) ----
 *.test.*
 *.spec.*
 *_test.*

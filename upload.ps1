@@ -14,6 +14,7 @@
 # 'Continue',git 成功与否靠 $LASTEXITCODE 判断。
 $ErrorActionPreference = 'Continue'
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+try { [Console]::InputEncoding  = [System.Text.Encoding]::UTF8 } catch { }
 try { [Console]::Title = 'Git 新手助手' } catch { }
 
 $scriptDir = ''
@@ -44,6 +45,29 @@ function Test-Prerequisites {
         return $false
     }
     return $true
+}
+
+# ---- 检查并配置 git 身份(user.name / user.email) ----
+# 全新电脑通常没配置过,第一次 git commit 会直接失败,报错还很
+# 难懂。这里提前引导用户设置一次(写到 --global,之后不用再设)。
+function Ensure-GitIdentity {
+    $name = ((& git config --get user.name 2>$null) | Out-String).Trim()
+    $email = ((& git config --get user.email 2>$null) | Out-String).Trim()
+    if ($name -and $email) { return }
+    Write-Host ""
+    Warn "git 还没有设置你的『名字』和『邮箱』,第一次提交会失败。"
+    Info "现在设置一次,以后就不用再设了。"
+    while (-not $name) {
+        $name = (Read-Host "   名字 / 昵称(例如:小王)").Trim()
+        if (-not $name) { Warn "名字不能为空,请输入一个。"; continue }
+        & git config --global user.name $name 2>$null
+    }
+    while (-not $email) {
+        $email = (Read-Host "   邮箱(任意邮箱即可)").Trim()
+        if (-not $email) { Warn "邮箱不能为空,请输入一个。"; continue }
+        & git config --global user.email $email 2>$null
+    }
+    Ok ("身份已设置:" + $name + " <" + $email + ">")
 }
 
 # ---- 还原拖到 .cmd 上的路径(空格会被拆开) ----
@@ -119,7 +143,6 @@ function Get-Rules {
             '.idea/', '.vscode/', 'dist/', 'build/', 'out/', 'coverage/',
             '.next/', '.nuxt/', '.pytest_cache/', '.mypy_cache/', '.ruff_cache/',
             '.cache/', 'target/', '.eggs/', '*.egg-info/',
-            'test/', 'tests/', '__tests__/', 'spec/', 'specs/', 'testdata/', 'fixtures/',
             '*.test.*', '*.spec.*', '*_test.*', '*_spec.*', 'test_*.py', '*_test.py',
             '*.pyc', '*.pyo', '*.class', '*.o', '*.log', '*.tmp', '*.bak', '*.swp',
             '*.DS_Store', 'Thumbs.db'
@@ -223,6 +246,20 @@ function Get-Changed([string]$repo, [string]$scope) {
 function Resolve-Target([string]$folder, $repos) {
     if (Test-Path -LiteralPath (Join-Path $folder '.git')) {
         return [pscustomobject]@{ Mode = 'inplace'; Repo = (Resolve-Path -LiteralPath $folder).Path; Scope = '.'; Dest = $null; RepoName = '(自身)' }
+    }
+    # 文件夹本身不是仓库,但可能正好在某个仓库的子目录里。
+    # 这种时候不要误建嵌套仓库,而是作为该仓库的一个子范围提交。
+    $top = ((& git -C $folder rev-parse --show-toplevel 2>$null) | Out-String).Trim()
+    if ($top) {
+        $topResolved = (Resolve-Path -LiteralPath $top -ErrorAction SilentlyContinue).Path
+        if ($topResolved) {
+            $topResolved = $topResolved.TrimEnd('\')
+            $f = (Resolve-Path -LiteralPath $folder).Path.TrimEnd('\')
+            if ($f.StartsWith($topResolved + '\')) {
+                $scope = $f.Substring($topResolved.Length + 1) -replace '\\', '/'
+                return [pscustomobject]@{ Mode = 'inplace'; Repo = $topResolved; Scope = $scope; Dest = $null; RepoName = '(上级仓库)' }
+            }
+        }
     }
     return $null
 }
@@ -364,23 +401,34 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
         $url = Read-Host "   然后把新仓库的网址粘到这里(形如 https://github.com/你的名字/仓库名.git);直接回车则跳过推送"
         if ($url.Trim()) { & git -C $repo remote add origin $url.Trim(); $remote = $url.Trim() }
     }
-    if ($remote) {
-        $branch = (& git -C $repo rev-parse --abbrev-ref HEAD 2>$null)
-        & git -C $repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            & git -C $repo push -u origin $branch
-        } else {
-            & git -C $repo push
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Warn ("推送失败(git 退出码 " + $LASTEXITCODE + ")。提交已保存在本地,但没有传到 GitHub。")
-            Info "常见原因:远程仓库不是空的(建仓库时勾了 README),或者账号没有登录/权限。"
-            Info "如果远程不是空的,可在 GitHub 网页上删掉该仓库,重新建一个空的再试。"
-            return $false
-        }
+    if (-not $remote) {
+        $hash = (& git -C $repo rev-parse --short HEAD 2>$null)
+        Write-Host ""
+        Warn "已提交到本地,但还没有上传到 GitHub(还没有关联远程仓库)。"
+        Info ("本地提交:" + $hash)
+        Info "建好 GitHub 空仓库后,回到菜单选 [2] 更新项目,就能补推上去。"
+        return $false
+    }
+
+    $branch = (& git -C $repo rev-parse --abbrev-ref HEAD 2>$null)
+    & git -C $repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Info "第一次推送需要登录 GitHub:如果弹出浏览器窗口,登录你的账号即可。"
+        Info "若出现『Username / Password』,请到 GitHub → Settings → Developer settings → Personal access tokens 生成一个 Token,当密码粘进去。"
+        & git -C $repo push -u origin $branch
+    } else {
+        & git -C $repo push
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Warn ("推送失败(git 退出码 " + $LASTEXITCODE + ")。提交已保存在本地,但没有传到 GitHub。")
+        Info "常见原因:"
+        Info "  1) 远程仓库不是空的(建仓库时勾了 README)→ 去 GitHub 删掉该仓库,重新建一个空的再试。"
+        Info "  2) 远程有新内容、本地落后 → 回菜单选 [4] 拉取更新,再回来 [2] 更新。"
+        Info "  3) 账号没登录 / 没权限 → 推送时会弹浏览器让你登录。"
+        return $false
     }
     $hash = (& git -C $repo rev-parse --short HEAD 2>$null)
-    Ok ("完成!commit " + $hash)
+    Ok ("完成!已推送到 GitHub,commit " + $hash)
     return $true
 }
 
@@ -610,6 +658,7 @@ function Show-Menu {
 
 # ============ main ============
 if (-not (Test-Prerequisites)) { return }
+Ensure-GitIdentity
 
 $rawArgs = @()
 if ($args -and $args.Count -gt 0) { $rawArgs = $args }
