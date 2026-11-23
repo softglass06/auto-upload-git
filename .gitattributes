@@ -1,0 +1,5 @@
+# 批处理文件对换行极敏感:强制原样保存(CRLF),不做 LF 归一化。
+# 否则 GitHub 下载的 zip 里是 LF,一旦 .cmd 里出现中文,cmd.exe 会把命令拆坏
+# (例如 chcp 65001 被拆成 "chcp 6" + "5001")。
+*.cmd -text
+*.bat -text

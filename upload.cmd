@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title Git 新手助手
+title Git Assistant
 setlocal
 set "ARGS="
 :loop
