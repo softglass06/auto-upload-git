@@ -17,11 +17,30 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 try { [Console]::InputEncoding  = [System.Text.Encoding]::UTF8 } catch { }
 try { [Console]::Title = 'Git 新手助手' } catch { }
 
-$scriptDir = ''
-if ($MyInvocation.MyCommand.Path) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
-if (-not $scriptDir) { $scriptDir = (Get-Location).Path }
-$reposFile = Join-Path $scriptDir 'repos.txt'
-$rulesFile = Join-Path $scriptDir 'filter-rules.txt'
+# ---- 数据目录:统一放 %APPDATA%\auto-upload-git ----
+# 不管是以 .ps1 运行、.cmd 启动,还是打包成 exe 双击,项目列表(repos.txt)
+# 和过滤规则(filter-rules.txt)都固定存这里,避免"从 zip 临时目录双击"时
+# 找不到文件或列表丢失。首次运行会把旧位置(脚本/程序旁边)的数据搬过来。
+$dataDir = Join-Path $env:APPDATA 'auto-upload-git'
+if (-not (Test-Path -LiteralPath $dataDir)) {
+    New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+}
+$reposFile = Join-Path $dataDir 'repos.txt'
+$rulesFile = Join-Path $dataDir 'filter-rules.txt'
+
+# 迁移旧数据:旧版把 repos.txt / filter-rules.txt 放在脚本同目录
+$legacyDir = ''
+if ($MyInvocation.MyCommand.Path) { $legacyDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+if ($legacyDir -and (Test-Path -LiteralPath $legacyDir)) {
+    $legacyRepos = Join-Path $legacyDir 'repos.txt'
+    if ((Test-Path -LiteralPath $legacyRepos) -and -not (Test-Path -LiteralPath $reposFile)) {
+        Copy-Item -LiteralPath $legacyRepos -Destination $reposFile -Force
+    }
+    $legacyRules = Join-Path $legacyDir 'filter-rules.txt'
+    if ((Test-Path -LiteralPath $legacyRules) -and -not (Test-Path -LiteralPath $rulesFile)) {
+        Copy-Item -LiteralPath $legacyRules -Destination $rulesFile -Force
+    }
+}
 
 function Say  { param([string]$m) Write-Host $m }
 function Step { param([string]$m) Write-Host ("`n== " + $m + " ==") -ForegroundColor Cyan }
@@ -676,6 +695,7 @@ if ($rawArgs.Count -gt 0) {
         }
     }
     Say "`n全部完成。"
+    Read-Host "`n   按回车关闭窗口"
 } else {
     Show-Menu
 }
