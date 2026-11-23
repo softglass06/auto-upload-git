@@ -38,3 +38,14 @@ test_*.py
 *.swp
 *.DS_Store
 Thumbs.db
+# ---- secrets / keys (千万别上传) ----
+.env
+.env.*
+*.key
+*.pem
+*.p12
+secrets.*
+credentials.*
+id_rsa*
+id_ed25519*
+id_ecdsa*

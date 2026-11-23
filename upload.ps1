@@ -164,7 +164,9 @@ function Get-Rules {
             '.cache/', 'target/', '.eggs/', '*.egg-info/',
             '*.test.*', '*.spec.*', '*_test.*', '*_spec.*', 'test_*.py', '*_test.py',
             '*.pyc', '*.pyo', '*.class', '*.o', '*.log', '*.tmp', '*.bak', '*.swp',
-            '*.DS_Store', 'Thumbs.db'
+            '*.DS_Store', 'Thumbs.db',
+            '.env', '.env.*', '*.key', '*.pem', '*.p12', 'secrets.*', 'credentials.*',
+            'id_rsa*', 'id_ed25519*', 'id_ecdsa*'
         )
     }
     return $rules
@@ -338,7 +340,19 @@ function Ensure-StarterGitignore([string]$folder) {
         '*.log',
         '*.pyc',
         '*.DS_Store',
-        'Thumbs.db'
+        'Thumbs.db',
+        '',
+        '# 密钥 / 密码,千万别上传',
+        '.env',
+        '.env.*',
+        '*.key',
+        '*.pem',
+        '*.p12',
+        'secrets.*',
+        'credentials.*',
+        'id_rsa*',
+        'id_ed25519*',
+        'id_ecdsa*'
     )
     $content = ($lines -join "`r`n") + "`r`n"
     [System.IO.File]::WriteAllText($gi, $content, (New-Object System.Text.UTF8Encoding($false)))
@@ -396,7 +410,7 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
     }
     $msgFile = Join-Path $env:TEMP ('gitmsg_' + [guid]::NewGuid().ToString('N') + '.txt')
     [System.IO.File]::WriteAllText($msgFile, $msg, (New-Object System.Text.UTF8Encoding($false)))
-    & git -C $repo commit -F $msgFile
+    & git -C $repo commit -F $msgFile | Out-Host
     $commitCode = $LASTEXITCODE
     Remove-Item $msgFile -Force -ErrorAction SilentlyContinue
 
@@ -431,12 +445,14 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
 
     $branch = (& git -C $repo rev-parse --abbrev-ref HEAD 2>$null)
     & git -C $repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Out-Null
+    $firstPush = $false
     if ($LASTEXITCODE -ne 0) {
+        $firstPush = $true
         Info "第一次推送需要登录 GitHub:如果弹出浏览器窗口,登录你的账号即可。"
         Info "若出现『Username / Password』,请到 GitHub → Settings → Developer settings → Personal access tokens 生成一个 Token,当密码粘进去。"
-        & git -C $repo push -u origin $branch
+        & git -C $repo push -u origin $branch | Out-Host
     } else {
-        & git -C $repo push
+        & git -C $repo push | Out-Host
     }
     if ($LASTEXITCODE -ne 0) {
         Warn ("推送失败(git 退出码 " + $LASTEXITCODE + ")。提交已保存在本地,但没有传到 GitHub。")
@@ -448,6 +464,9 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
     }
     $hash = (& git -C $repo rev-parse --short HEAD 2>$null)
     Ok ("完成!已推送到 GitHub,commit " + $hash)
+    if ($firstPush) {
+        Info ("如果 GitHub 网页上看着还是空的:点仓库左上角的分支下拉,把默认分支设成 '" + $branch + "' 即可。")
+    }
     return $true
 }
 
@@ -477,7 +496,7 @@ function Upload-Folder([string]$folder, $repos, [string[]]$rules) {
         $included = @(); $excluded = @()
         foreach ($f in $allFiles) { if (Match-Rule $f.Rel $srcRules) { $excluded += $f } else { $included += $f } }
         Info ("方式:复制到 -> " + $target.Dest)
-        Info ("要上传的核心文件:" + $included.Count + " 个    已跳过(测试/构建等):" + $excluded.Count + " 个")
+        Info ("要上传的核心文件:" + $included.Count + " 个    已跳过(测试/构建/密钥等):" + $excluded.Count + " 个")
         $shown = [Math]::Min(30, $excluded.Count)
         if ($shown -gt 0) {
             Info "跳过的示例:"
@@ -506,13 +525,13 @@ function Upload-Folder([string]$folder, $repos, [string[]]$rules) {
         }
         $scopeLabel = $(if ($scope -and $scope -ne '.') { $scope } else { '<仓库根目录>' })
         Info ("方式:原地提交 " + $repo + "  (范围:" + $scopeLabel + ")")
-        Info ("有改动、将提交的文件:" + $commitPaths.Count + " 个    已跳过(测试/构建):" + $skipPaths.Count + " 个")
+        Info ("有改动、将提交的文件:" + $commitPaths.Count + " 个    已跳过(测试/构建/密钥等):" + $skipPaths.Count + " 个")
         $shown = [Math]::Min(30, $skipPaths.Count)
         if ($shown -gt 0) {
             Info "已跳过:"
             for ($i = 0; $i -lt $shown; $i++) { Info ("    - " + $skipPaths[$i]) }
         }
-        if ($commitPaths.Count -eq 0) { Info "只有测试/构建文件变了,或没有改动,无需提交。"; return $false }
+        if ($commitPaths.Count -eq 0) { Info "只有测试/构建/密钥文件变了,或没有改动,无需提交。"; return $false }
         if (-not (Confirm)) { Info "已取消。"; return $false }
         $desc = Read-Host "   这次做了什么改动?(一句话,直接回车用默认)"
         $msg = Get-CommitMessage $desc
@@ -537,14 +556,17 @@ function Update-Folder([string]$repoPath, [string[]]$rules) {
         Ok "没有需要提交的改动,工作区是干净的。"
         return
     }
-    Info ("有改动、将提交的文件:" + $commitPaths.Count + " 个    已跳过(测试/构建):" + $skipPaths.Count + " 个")
+    Info "注意:这里会提交上面整个仓库的所有改动(不只一个文件夹)。"
+    Info ("有改动、将提交的文件:" + $commitPaths.Count + " 个    已跳过(测试/构建/密钥等):" + $skipPaths.Count + " 个")
     $shown = [Math]::Min(30, $commitPaths.Count)
     Info "将要提交:"
     for ($i = 0; $i -lt $shown; $i++) { Info ("    - " + $commitPaths[$i]) }
+    if ($commitPaths.Count -gt $shown) { Info ("    ... 还有 " + ($commitPaths.Count - $shown) + " 个没列出") }
     if ($skipPaths.Count -gt 0) {
         $shown = [Math]::Min(10, $skipPaths.Count)
         Info "已跳过:"
         for ($i = 0; $i -lt $shown; $i++) { Info ("    - " + $skipPaths[$i]) }
+        if ($skipPaths.Count -gt $shown) { Info ("    ... 还有 " + ($skipPaths.Count - $shown) + " 个没列出") }
     }
     $desc = Read-Host "   这次改了什么?(一句话,直接回车用『更新』)"
     $msg = Get-CommitMessage $desc
@@ -578,9 +600,31 @@ function Pull-Repo([string]$repoPath) {
         Fail "这个仓库还没有关联远程仓库,无法拉取。"
         return
     }
-    & git -C $repo pull
-    if ($LASTEXITCODE -eq 0) { Ok "拉取完成。" }
-    else { Warn ("拉取失败(git 退出码 " + $LASTEXITCODE + ")。") }
+    & git -C $repo pull | Out-Host
+    if ($LASTEXITCODE -eq 0) { Ok "拉取完成。"; return }
+    # 判断是不是"冲突"(两个人改了同一处)
+    $conflict = & git -C $repo status --porcelain=v1 2>$null | Where-Object { $_ -match '^(UU|AA|DD|AU|UA|DU|UD) ' }
+    if ($conflict) {
+        Warn "拉取时遇到了冲突:两个人改了同一处,电脑不知道听谁的。"
+        Say "  [a] 撤销这次拉取,恢复成拉取前的样子(推荐)"
+        Say "  [k] 我自己打开冲突文件,手动处理"
+        $c = Read-Host "   输入 a 或 k"
+        if ($c -match '^[aA]') {
+            & git -C $repo merge --abort 2>$null | Out-Null
+            & git -C $repo rebase --abort 2>$null | Out-Null
+            Ok "已撤销,你的文件恢复成拉取前的样子。"
+        } else {
+            foreach ($f in $conflict) {
+                if ($f -isnot [string]) { continue }
+                $p = $f.Substring(3).Trim()
+                if ($p) { Info ("  冲突文件: " + $p) }
+            }
+            Warn "用编辑器打开上面这些文件,找到 <<<<<<< 和 >>>>>>> 中间的部分,手动合并保存后再上传。"
+        }
+    } else {
+        Warn ("拉取失败(git 退出码 " + $LASTEXITCODE + ")。")
+        Info "常见原因:没登录、网络不通,或本地有没提交的改动挡着。"
+    }
 }
 
 # ---- 选择一个项目路径(列表或手动) ----
@@ -615,6 +659,29 @@ function Pick-RepoPath($repos) {
         }
     }
     return $null
+}
+
+# ---- 配置:打开项目列表 / 过滤规则 ----
+function Menu-Config {
+    Write-Host ""
+    Write-Host "  这里有两个配置文件,想改就打开改一下:" -ForegroundColor Cyan
+    Write-Host ""
+    Info "  1) 我的项目列表(更新/查看/拉取时直接选它):"
+    Info ("      " + $reposFile)
+    Info "  2) 过滤规则(哪些文件不传:node_modules、.env 密钥等):"
+    Info ("      " + $rulesFile)
+    Write-Host ""
+    Say "  [1] 打开『我的项目列表』"
+    Say "  [2] 打开『过滤规则』"
+    Say "  [0] 返回"
+    $c = Read-Host "   请输入数字"
+    if ($c -eq '1') {
+        if (-not (Test-Path -LiteralPath $reposFile)) { New-Item -ItemType File -Path $reposFile -Force | Out-Null }
+        Start-Process notepad -ArgumentList ('"' + $reposFile + '"')
+    } elseif ($c -eq '2') {
+        if (-not (Test-Path -LiteralPath $rulesFile)) { New-Item -ItemType File -Path $rulesFile -Force | Out-Null }
+        Start-Process notepad -ArgumentList ('"' + $rulesFile + '"')
+    }
 }
 
 # ---- 菜单处理 ----
@@ -661,6 +728,7 @@ function Show-Menu {
         Write-Host "    [2] 更新项目      (改了东西,推上去)"
         Write-Host "    [3] 查看改动      (看看哪些文件变了)"
         Write-Host "    [4] 拉取更新      (下载远程的最新改动)"
+        Write-Host "    [5] 配置          (我的项目 / 过滤规则)"
         Write-Host "    [0] 退出"
         Write-Host ""
         $sel = Read-Host "   请输入数字后回车"
@@ -669,8 +737,9 @@ function Show-Menu {
             '2' { Menu-Update }
             '3' { Menu-Status }
             '4' { Menu-Pull }
+            '5' { Menu-Config }
             '0' { Write-Host "  再见!"; return }
-            default { Write-Host "  没看懂,请输入 0 到 4。" -ForegroundColor Yellow }
+            default { Write-Host "  没看懂,请输入 0 到 5。" -ForegroundColor Yellow }
         }
     }
 }
