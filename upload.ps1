@@ -17,11 +17,20 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 try { [Console]::InputEncoding  = [System.Text.Encoding]::UTF8 } catch { }
 try { [Console]::Title = 'Git 新手助手' } catch { }
 
-# ---- 数据目录:统一放 %APPDATA%\auto-upload-git ----
-# 不管是以 .ps1 运行、.cmd 启动,还是打包成 exe 双击,项目列表(repos.txt)
-# 和过滤规则(filter-rules.txt)都固定存这里,避免"从 zip 临时目录双击"时
-# 找不到文件或列表丢失。首次运行会把旧位置(脚本/程序旁边)的数据搬过来。
-$dataDir = Join-Path $env:APPDATA 'auto-upload-git'
+# ---- 平台判断 ----
+# 同一份脚本同时跑在 Windows(PowerShell 5.1)和 macOS(PowerShell 7)。
+# Windows 上环境变量 OS = Windows_NT;macOS / Linux 上通常没有这个变量。
+$IsWin = ($env:OS -eq 'Windows_NT')
+# 路径分隔符:Windows 是 '\',macOS / Linux 是 '/'。
+$sep = [System.IO.Path]::DirectorySeparatorChar.ToString()
+
+# ---- 数据目录 ----
+# 不管是以 .ps1 运行、.cmd / .command 启动,还是打包成 exe 双击,项目列表
+# (repos.txt) 和过滤规则 (filter-rules.txt) 都固定存这里,避免"从临时目录双击"
+# 时找不到文件或列表丢失。Windows 放 %APPDATA%,macOS / Linux 放 ~/.config。
+# 首次运行会把旧位置(脚本/程序旁边)的数据搬过来。
+if ($IsWin) { $dataDir = Join-Path $env:APPDATA 'auto-upload-git' }
+else { $dataDir = Join-Path (Join-Path $HOME '.config') 'auto-upload-git' }
 if (-not (Test-Path -LiteralPath $dataDir)) {
     New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
 }
@@ -56,9 +65,16 @@ function Test-Prerequisites {
         Write-Host ""
         Write-Host "   X 没有找到 git,本工具无法工作。" -ForegroundColor Red
         Write-Host ""
-        Write-Host "   请先安装 Git for Windows:" -ForegroundColor Yellow
-        Write-Host "     https://git-scm.com/download/win" -ForegroundColor Cyan
-        Write-Host "   安装时一路点『下一步』即可,装完重新双击本工具。" -ForegroundColor Yellow
+        if ($IsWin) {
+            Write-Host "   请先安装 Git for Windows:" -ForegroundColor Yellow
+            Write-Host "     https://git-scm.com/download/win" -ForegroundColor Cyan
+            Write-Host "   安装时一路点『下一步』即可,装完重新双击本工具。" -ForegroundColor Yellow
+        } else {
+            Write-Host "   请先安装 git。macOS 上一般第一次在终端敲 git 会自动弹窗引导安装;" -ForegroundColor Yellow
+            Write-Host "   没弹窗的话,在终端运行:" -ForegroundColor Yellow
+            Write-Host "     xcode-select --install" -ForegroundColor Cyan
+            Write-Host "   装完重新打开本工具即可。" -ForegroundColor Yellow
+        }
         Write-Host ""
         Read-Host "   按回车退出"
         return $false
@@ -108,16 +124,24 @@ function Reconstruct-Paths([string[]]$tokens) {
     return $out
 }
 
-# ---- 弹窗选择文件夹(无参数时) ----
+# ---- 选择文件夹(无参数时) ----
+# Windows 用系统弹窗;macOS 用 osascript 调出原生选择框;选不到再退回手动输入。
 function Pick-Folder {
-    try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-        $dlg.Description = "请选择一个文件夹"
-        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-            return $dlg.SelectedPath
-        }
-    } catch { }
+    if ($IsWin) {
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+            $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+            $dlg.Description = "请选择一个文件夹"
+            if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                return $dlg.SelectedPath
+            }
+        } catch { }
+    } else {
+        try {
+            $p = ((& osascript -e 'POSIX path of (choose folder with prompt "请选择一个文件夹")' 2>$null) | Out-String).Trim()
+            if ($p) { return $p }
+        } catch { }
+    }
     return (Read-Host "   请输入文件夹完整路径").Trim()
 }
 
@@ -225,7 +249,7 @@ function Match-Rule([string]$rel, [string[]]$rules) {
 
 # ---- 遍历文件夹,剪掉被排除的目录 ----
 function Get-Files([string]$root, [string[]]$rules) {
-    $root = (Resolve-Path -LiteralPath $root).Path.TrimEnd('\')
+    $root = (Resolve-Path -LiteralPath $root).Path.TrimEnd($sep)
     $items = New-Object System.Collections.Generic.List[object]
     $skipped = New-Object System.Collections.Generic.List[string]
     $stack = New-Object System.Collections.Generic.Stack[string]
@@ -300,9 +324,9 @@ function Resolve-Target([string]$folder, $repos) {
     if ($top) {
         $topResolved = (Resolve-Path -LiteralPath $top -ErrorAction SilentlyContinue).Path
         if ($topResolved) {
-            $topResolved = $topResolved.TrimEnd('\')
-            $f = (Resolve-Path -LiteralPath $folder).Path.TrimEnd('\')
-            if ($f.StartsWith($topResolved + '\')) {
+            $topResolved = $topResolved.TrimEnd($sep)
+            $f = (Resolve-Path -LiteralPath $folder).Path.TrimEnd($sep)
+            if ($f.StartsWith($topResolved + $sep)) {
                 $scope = $f.Substring($topResolved.Length + 1) -replace '\\', '/'
                 return [pscustomobject]@{ Mode = 'inplace'; Repo = $topResolved; Scope = $scope; Dest = $null; RepoName = '(上级仓库)' }
             }
@@ -331,9 +355,9 @@ function Prompt-Target([string]$folder, $repos) {
             $r = $repos[$n - 1]
             $rpFull = (Resolve-Path -LiteralPath $r.Path -ErrorAction SilentlyContinue).Path
             if (-not $rpFull) { Fail ("找不到仓库路径:" + $r.Path); return $null }
-            $f = (Resolve-Path -LiteralPath $folder).Path.TrimEnd('\')
-            $rpFull = $rpFull.TrimEnd('\')
-            if ($f.StartsWith($rpFull + '\')) {
+            $f = (Resolve-Path -LiteralPath $folder).Path.TrimEnd($sep)
+            $rpFull = $rpFull.TrimEnd($sep)
+            if ($f.StartsWith($rpFull + $sep)) {
                 $scope = $f.Substring($rpFull.Length + 1) -replace '\\', '/'
                 return [pscustomobject]@{ Mode = 'inplace'; Repo = $rpFull; Scope = $scope; Dest = $null; RepoName = $r.Name }
             }
@@ -434,7 +458,7 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
         Info "没有需要提交的改动(可能已是最新,或改动都被过滤掉了)。"
         return $false
     }
-    $msgFile = Join-Path $env:TEMP ('gitmsg_' + [guid]::NewGuid().ToString('N') + '.txt')
+    $msgFile = Join-Path ([System.IO.Path]::GetTempPath()) ('gitmsg_' + [guid]::NewGuid().ToString('N') + '.txt')
     [System.IO.File]::WriteAllText($msgFile, $msg, (New-Object System.Text.UTF8Encoding($false)))
     & git -C $repo commit -F $msgFile | Out-Host
     $commitCode = $LASTEXITCODE
@@ -550,7 +574,7 @@ function Upload-Folder([string]$folder, $repos, [string[]]$rules) {
         if ($included.Count -eq 0) { Info "没有找到核心文件,无需处理。"; return $false }
         if (-not (Confirm)) { Info "已取消。"; return $false }
         foreach ($f in $included) {
-            $dst = Join-Path $target.Dest ($f.Rel -replace '/', '\')
+            $dst = Join-Path $target.Dest ($f.Rel -replace '/', $sep)
             $dstDir = Split-Path -Parent $dst
             if (-not (Test-Path -LiteralPath $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
             Copy-Item -LiteralPath $f.Abs -Destination $dst -Force
@@ -676,7 +700,7 @@ function Pull-Repo([string]$repoPath) {
 function Show-ConflictHelp {
     Write-Host ""
     Info "手动合并其实就三步:"
-    Write-Host "     1) 用记事本打开上面列出的『冲突文件』"
+    Write-Host "     1) 用文本编辑器(记事本 / 文本编辑)打开上面列出的『冲突文件』"
     Write-Host "     2) 你会看到这种标记:"
     Write-Host "           <<<<<<< HEAD       ← 你自己改的"
     Write-Host "           ========="
@@ -909,10 +933,10 @@ function Menu-Config {
     $c = Read-Host "   请输入数字"
     if ($c -eq '1') {
         if (-not (Test-Path -LiteralPath $reposFile)) { New-Item -ItemType File -Path $reposFile -Force | Out-Null }
-        Start-Process notepad -ArgumentList ('"' + $reposFile + '"')
+        if ($IsWin) { Start-Process notepad -ArgumentList ('"' + $reposFile + '"') } else { & open -e $reposFile }
     } elseif ($c -eq '2') {
         if (-not (Test-Path -LiteralPath $rulesFile)) { New-Item -ItemType File -Path $rulesFile -Force | Out-Null }
-        Start-Process notepad -ArgumentList ('"' + $rulesFile + '"')
+        if ($IsWin) { Start-Process notepad -ArgumentList ('"' + $rulesFile + '"') } else { & open -e $rulesFile }
     }
 }
 

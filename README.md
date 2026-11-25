@@ -1,10 +1,10 @@
 # 小白上传（自动上传github）
 
-一个 Windows 傻瓜式 Git 工具:双击图标打开一个**中文菜单**,上传项目、更新、查看改动、拉取更新都在里面点选完成,不需要记任何 git 命令。
+一个 Windows / macOS 傻瓜式 Git 工具:双击图标打开一个**中文菜单**,上传项目、更新、查看改动、拉取更新都在里面点选完成,不需要记任何 git 命令。
 
 ## 功能
 
-双击 `upload.exe` 打开中文菜单:
+双击打开中文菜单(Windows 双击 `upload.exe`,macOS 双击 `upload.command`):
 
 - **[1] 上传新项目** — 第一次把一个项目传到 GitHub。自动识别三种情况:
   - 文件夹自带 `.git` → 原地提交并推送
@@ -16,7 +16,7 @@
 - **[6] 克隆项目** — 把队友的仓库克隆到本地,加入小组协作
 - **[7] 分支管理** — 新建 / 切换 / 合并分支(协作时每人开自己的线)
 
-拖拽也可以:把文件夹直接拖到 `upload.exe` 图标上,自动进入「上传」流程。
+拖拽也可以(仅 Windows):把文件夹直接拖到 `upload.exe` 图标上,自动进入「上传」流程。
 
 ### 其它贴心点
 
@@ -48,20 +48,24 @@
 ## 安装
 
 1. 下载本仓库 zip 并**解压全部**(或 clone)到本地
-2. 双击 `upload.exe` 打开中文菜单;也可以把文件夹拖到它上面直接上传
-3. 建议右键 `upload.exe` →「发送到」→「桌面快捷方式」,重命名为「Git 助手」,以后双击桌面图标就行
+2. **Windows**:双击 `upload.exe` 打开中文菜单;也可以把文件夹拖到它上面直接上传
+3. **macOS**:先装好 PowerShell 7 和 git(见下方「依赖」),然后双击 `upload.command`
+4. Windows 建议右键 `upload.exe` →「发送到」→「桌面快捷方式」,重命名为「Git 助手」,以后双击桌面图标就行
 
-> 首次双击 `upload.exe` 时,Windows 可能弹「Windows 已保护你的电脑」,
+> Windows 首次双击 `upload.exe` 时,可能弹「Windows 已保护你的电脑」,
 > 点「更多信息」→「仍要运行」即可(只弹一次,因为这是没签名的小工具)。
 
-> 为什么打包成 exe? 因为直接在 zip 里双击 `upload.cmd` 时,Windows 只解压那一个
+> macOS 首次双击 `upload.command` 时,可能弹「无法打开」,去「系统设置 → 隐私与安全性」里点「仍要打开」即可(也是因为没签名)。
+
+> 为什么 Windows 打包成 exe? 因为直接在 zip 里双击 `upload.cmd` 时,Windows 只解压那一个
 > 文件、旁边的脚本没跟上会报错;单个 exe 把所有东西都装进去了,双击即用,不再
 > 受「解压 / 编码 / 换行」影响。
 
 ## 依赖
 
-- **Windows**(PowerShell 5.1 或更高)
-- **git**,且在 PATH 中(没装会弹出中文安装引导)
+- **Windows**:系统自带 PowerShell 5.1,不用装
+- **macOS**:需要装 **PowerShell 7**(`pwsh`),官网 `https://aka.ms/powershell-release?tag=stable` 下载安装包,或已装 Homebrew 的话 `brew install --cask powershell`
+- **git**:Windows 上没装会弹出中文安装引导;macOS 上第一次在终端敲 `git` 一般会自动弹窗引导安装(或 `xcode-select --install`)
 - **Claude Code CLI**(可选,用于润色提交信息;没装会退回用你输入的原文)
 
 ## 配置
@@ -79,9 +83,9 @@
 
 这个文件已被 `.gitignore` 忽略,不会随工具上传,里面的个人路径不会泄露。
 
-> 从这一版开始,`repos.txt` 和 `filter-rules.txt` 统一存在 `%APPDATA%\auto-upload-git\`
-> (例如 `C:\Users\你\AppData\Roaming\auto-upload-git\`),不再和程序放在一起。
-> 这样不管程序放在哪、是不是从 zip 临时目录里双击,你的列表都不会丢。旧版数据会在首次运行时自动搬过去。
+> `repos.txt` 和 `filter-rules.txt` 统一存在用户配置目录里,不再和程序放在一起:
+> Windows 在 `%APPDATA%\auto-upload-git\`(如 `C:\Users\你\AppData\Roaming\auto-upload-git\`),
+> macOS 在 `~/.config/auto-upload-git\`。这样不管程序放在哪,你的列表都不会丢。旧版数据会在首次运行时自动搬过去。
 
 ### filter-rules.txt(过滤规则)
 
@@ -116,4 +120,4 @@
 - **改完 `upload.ps1` 必须重新打包 `upload.exe`**,否则新手双击的还是旧版:
   `ps2exe -inputFile upload.ps1 -outputFile upload.exe -STA`
 - **`filter-rules.txt` 的默认规则只在首次运行时复制到 `%APPDATA%`**;已装过的用户不会自动拿到新增规则,改规则时要在发布说明里提醒用户手动同步(菜单 [5])。
-- `upload.ps1` 必须保持 **UTF-8 带 BOM**;`upload.cmd` 必须保持 **ASCII + CRLF**(详见上文常见问题)。
+- `upload.ps1` 必须保持 **UTF-8 带 BOM**;`upload.cmd` 必须保持 **ASCII + CRLF**;`upload.command` 必须保持 **LF 换行**(详见上文常见问题)。

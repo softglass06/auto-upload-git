@@ -3,3 +3,5 @@
 # (例如 chcp 65001 被拆成 "chcp 6" + "5001")。
 *.cmd -text
 *.bat -text
+# .command 是 macOS 双击运行的 shell 脚本,必须保持 LF 换行(CRLF 会让 bash 报错)。
+*.command -text
