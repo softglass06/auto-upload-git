@@ -263,6 +263,30 @@ function Get-Changed([string]$repo, [string]$scope) {
     return $out
 }
 
+# ---- 获取当前分支名 ----
+function Get-CurrentBranch([string]$repo) {
+    # symbolic-ref 在「还没任何提交」的新仓库里也能正确返回分支名,
+    # 而 rev-parse --abbrev-ref HEAD 会报错返回 "HEAD"。用前者,失败再退回后者。
+    $b = ((& git -C $repo symbolic-ref --short HEAD 2>$null) | Out-String).Trim()
+    if (-not $b) { $b = ((& git -C $repo rev-parse --abbrev-ref HEAD 2>$null) | Out-String).Trim() }
+    return $b
+}
+
+# ---- 列出本地分支(带 * 的是当前分支) ----
+function Get-Branches([string]$repo) {
+    $lines = & git -C $repo branch 2>$null
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($l in $lines) {
+        if ($l -isnot [string]) { continue }
+        $t = $l.Trim()
+        if (-not $t) { continue }
+        $cur = $false
+        if ($t.StartsWith('*')) { $cur = $true; $t = $t.Substring(1).Trim() }
+        $out.Add([pscustomobject]@{ Name = $t; Current = $cur })
+    }
+    return $out
+}
+
 # ---- 识别目标仓库/方式 ----
 function Resolve-Target([string]$folder, $repos) {
     if (Test-Path -LiteralPath (Join-Path $folder '.git')) {
@@ -627,6 +651,162 @@ function Pull-Repo([string]$repoPath) {
     }
 }
 
+# ---- 新建分支并切过去 ----
+function New-Branch([string]$repo) {
+    $cur = Get-CurrentBranch $repo
+    Info ("当前分支:" + $cur)
+    $name = (Read-Host "   新分支叫什么?(建议: 你的名字-功能, 例如 xiaowang-登录)").Trim()
+    if (-not $name) { Warn "分支名不能为空,已取消。"; return }
+    if ($name -match '\s') { Warn "分支名不能有空格,已取消。"; return }
+    & git -C $repo switch -c $name 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        & git -C $repo checkout -b $name 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Fail "新建分支失败(可能这个名字已经存在)。"
+            return
+        }
+    }
+    Ok ("已新建并切到分支:" + $name)
+    Info "接下来用 [2] 更新项目,你的改动就会推到这条新分支上。"
+    Info "推上去后,去 GitHub 网页点『Compare & pull request』,请队友把它合并进 main。"
+}
+
+# ---- 切换分支 ----
+function Switch-Branch([string]$repo) {
+    $branches = Get-Branches $repo
+    if ($branches.Count -eq 0) { Info "还没有分支(至少要有一次提交)。"; return }
+    Info ("当前分支:" + (Get-CurrentBranch $repo))
+    $others = @()
+    foreach ($b in $branches) { if (-not $b.Current) { $others += $b } }
+    if ($others.Count -eq 0) { Info "只有当前这一条分支,没有别的可切。"; return }
+    Write-Host ""
+    Info "选择要切过去的分支:"
+    for ($i = 0; $i -lt $others.Count; $i++) { Write-Host ("    [" + ($i + 1) + "] " + $others[$i].Name) }
+    Write-Host "    [0] 返回"
+    $sel = Read-Host "   请输入数字"
+    if ($sel -match '^[0-9]+$') {
+        $v = [int]$sel
+        if ($v -ge 1 -and $v -le $others.Count) {
+            $target = $others[$v - 1].Name
+            & git -C $repo switch $target 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                Fail "切换失败。常见原因:有没提交的改动挡着(先 [2] 更新提交,或 [3] 查看改动)。"
+                return
+            }
+            Ok ("已切到分支:" + $target)
+            return
+        }
+    }
+    Info "已取消。"
+}
+
+# ---- 合并分支(把选中的分支并进当前分支) ----
+function Merge-Branch([string]$repo) {
+    $cur = Get-CurrentBranch $repo
+    $branches = Get-Branches $repo
+    if ($branches.Count -eq 0) { Info "还没有分支。"; return }
+    Info ("当前分支:" + $cur + "  (会把别的分支合并到这里面)")
+    $others = @()
+    foreach ($b in $branches) { if (-not $b.Current) { $others += $b } }
+    if ($others.Count -eq 0) { Info "只有当前这一条分支,没有可合并的。"; return }
+    Write-Host ""
+    Info "选择要合并进来的分支:"
+    for ($i = 0; $i -lt $others.Count; $i++) { Write-Host ("    [" + ($i + 1) + "] " + $others[$i].Name) }
+    Write-Host "    [0] 返回"
+    $sel = Read-Host "   请输入数字"
+    if ($sel -match '^[0-9]+$') {
+        $v = [int]$sel
+        if ($v -ge 1 -and $v -le $others.Count) {
+            $target = $others[$v - 1].Name
+            # --no-edit:分叉合并时不弹编辑器让输入信息,直接用默认的 "Merge branch ..."
+            & git -C $repo merge --no-edit $target | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                $conflict = & git -C $repo status --porcelain=v1 2>$null | Where-Object { $_ -match '^(UU|AA|DD|AU|UA|DU|UD) ' }
+                if ($conflict) {
+                    Warn "合并时遇到冲突:两条分支改了同一处。"
+                    Say "  [a] 撤销这次合并,恢复原样(推荐)"
+                    Say "  [k] 我自己打开冲突文件,手动处理"
+                    $c = Read-Host "   输入 a 或 k"
+                    if ($c -match '^[aA]') {
+                        & git -C $repo merge --abort 2>$null | Out-Null
+                        Ok "已撤销合并,恢复原样。"
+                    } else {
+                        foreach ($f in $conflict) {
+                            if ($f -isnot [string]) { continue }
+                            $p = $f.Substring(3).Trim()
+                            if ($p) { Info ("  冲突文件: " + $p) }
+                        }
+                        Warn "用编辑器打开上面这些文件,找到 <<<<<<< 和 >>>>>>> 中间的部分,手动合并保存后,再用 [2] 更新提交。"
+                    }
+                } else {
+                    Fail ("合并失败(git 退出码 " + $LASTEXITCODE + ")。常见原因:有没提交的改动挡着。")
+                }
+                return
+            }
+            Ok ("已把 '" + $target + "' 合并进 '" + $cur + "'。")
+            Info "如果还要把当前分支上传,用 [2] 更新项目即可。"
+            return
+        }
+    }
+    Info "已取消。"
+}
+
+# ---- 分支管理子菜单 ----
+function Menu-Branch {
+    $repos = Get-Repos
+    $p = Pick-RepoPath $repos
+    if (-not $p) { return }
+    $repo = (Resolve-Path -LiteralPath $p).Path
+    while ($true) {
+        Write-Host ""
+        Write-Host "  ---- 分支管理 ----" -ForegroundColor Cyan
+        Info ("  当前分支:" + (Get-CurrentBranch $repo))
+        Write-Host "    [1] 新建分支   (开一条自己的线,别直接改 main)"
+        Write-Host "    [2] 切换分支   (在几条分支间来回换)"
+        Write-Host "    [3] 合并分支   (把别的分支并进当前分支)"
+        Write-Host "    [0] 返回"
+        Write-Host ""
+        $sel = Read-Host "   请输入数字后回车"
+        switch ($sel) {
+            '1' { New-Branch $repo }
+            '2' { Switch-Branch $repo }
+            '3' { Merge-Branch $repo }
+            '0' { return }
+            default { Write-Host "  没看懂,请输入 0 到 3。" -ForegroundColor Yellow }
+        }
+    }
+}
+
+# ---- 克隆项目(小组协作:把队友的仓库拿下来) ----
+function Menu-Clone {
+    Step "克隆项目"
+    $url = (Read-Host "   粘贴队友给的仓库网址(形如 https://github.com/名字/仓库名.git)").Trim()
+    if (-not $url) { Info "没有输入网址,已取消。"; return }
+    $parent = Pick-Folder
+    if (-not $parent) { return }
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) { Fail ("文件夹不存在:" + $parent); return }
+    $parent = (Resolve-Path -LiteralPath $parent).Path
+    Info ("克隆到:" + $parent)
+    & git -C $parent clone $url | Out-Host
+    if ($LASTEXITCODE -ne 0) {
+        Fail ("克隆失败(git 退出码 " + $LASTEXITCODE + ")。")
+        Info "常见原因:"
+        Info "  1) 网址拼错 / 多复制了空格 → 重新复制一遍地址"
+        Info "  2) 这个目录下已经有一个同名文件夹 → 换一个空文件夹"
+        Info "  3) 私有仓库没有权限 → 登录后重试,或让队友把你加进仓库"
+        return
+    }
+    $leaf = (Split-Path -Leaf $url) -replace '\.git$', ''
+    $dest = Join-Path $parent $leaf
+    if (Test-Path -LiteralPath $dest) {
+        $dest = (Resolve-Path -LiteralPath $dest).Path
+        Ok ("克隆完成:" + $dest)
+        Add-Repo $leaf $dest
+    } else {
+        Ok "克隆完成。"
+    }
+}
+
 # ---- 选择一个项目路径(列表或手动) ----
 function Pick-RepoPath($repos) {
     if ($repos.Count -eq 0) {
@@ -729,6 +909,8 @@ function Show-Menu {
         Write-Host "    [3] 查看改动      (看看哪些文件变了)"
         Write-Host "    [4] 拉取更新      (下载远程的最新改动)"
         Write-Host "    [5] 配置          (我的项目 / 过滤规则)"
+        Write-Host "    [6] 克隆项目      (加入别人的项目 / 小组协作)"
+        Write-Host "    [7] 分支管理      (新建 / 切换 / 合并分支)"
         Write-Host "    [0] 退出"
         Write-Host ""
         $sel = Read-Host "   请输入数字后回车"
@@ -738,8 +920,10 @@ function Show-Menu {
             '3' { Menu-Status }
             '4' { Menu-Pull }
             '5' { Menu-Config }
+            '6' { Menu-Clone }
+            '7' { Menu-Branch }
             '0' { Write-Host "  再见!"; return }
-            default { Write-Host "  没看懂,请输入 0 到 5。" -ForegroundColor Yellow }
+            default { Write-Host "  没看懂,请输入 0 到 7。" -ForegroundColor Yellow }
         }
     }
 }
