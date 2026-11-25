@@ -81,6 +81,7 @@ function Ensure-GitIdentity {
         if (-not $name) { Warn "名字不能为空,请输入一个。"; continue }
         & git config --global user.name $name 2>$null
     }
+    Info "公开仓库的提交会公开这个邮箱;想保密可填 GitHub 的 no-reply 邮箱(用户名@users.noreply.github.com)。"
     while (-not $email) {
         $email = (Read-Host "   邮箱(任意邮箱即可)").Trim()
         if (-not $email) { Warn "邮箱不能为空,请输入一个。"; continue }
@@ -226,6 +227,7 @@ function Match-Rule([string]$rel, [string[]]$rules) {
 function Get-Files([string]$root, [string[]]$rules) {
     $root = (Resolve-Path -LiteralPath $root).Path.TrimEnd('\')
     $items = New-Object System.Collections.Generic.List[object]
+    $skipped = New-Object System.Collections.Generic.List[string]
     $stack = New-Object System.Collections.Generic.Stack[string]
     $stack.Push($root)
     while ($stack.Count -gt 0) {
@@ -233,7 +235,7 @@ function Get-Files([string]$root, [string[]]$rules) {
         Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue | ForEach-Object {
             if ($_.PSIsContainer) {
                 if ($_.Name -eq '.git') { return }
-                if (Test-DirSkipped $_.Name $rules) { return }
+                if (Test-DirSkipped $_.Name $rules) { $skipped.Add($_.Name + '/'); return }
                 $stack.Push($_.FullName)
             } else {
                 $rel = $_.FullName.Substring($root.Length + 1) -replace '\\', '/'
@@ -241,7 +243,7 @@ function Get-Files([string]$root, [string[]]$rules) {
             }
         }
     }
-    return $items
+    return [pscustomobject]@{ Files = $items; SkippedDirs = $skipped }
 }
 
 # ---- 取范围内有改动的路径(含状态),中文路径不转义 ----
@@ -467,13 +469,20 @@ function Do-CommitAndPush([string]$repo, [string]$scope, [string[]]$excluded, [s
         return $false
     }
 
-    $branch = (& git -C $repo rev-parse --abbrev-ref HEAD 2>$null)
+    $branch = Get-CurrentBranch $repo
     & git -C $repo rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null | Out-Null
     $firstPush = $false
     if ($LASTEXITCODE -ne 0) {
         $firstPush = $true
-        Info "第一次推送需要登录 GitHub:如果弹出浏览器窗口,登录你的账号即可。"
-        Info "若出现『Username / Password』,请到 GitHub → Settings → Developer settings → Personal access tokens 生成一个 Token,当密码粘进去。"
+        Info "第一次推送需要登录 GitHub:如果自动弹出浏览器,点『Authorize』登录即可,下面这段可以跳过。"
+        Info "如果黑框里出现『Username / Password』(没弹浏览器),照下面弄一个『访问令牌』当密码:"
+        Write-Host "     1) 浏览器打开 https://github.com/settings/tokens" -ForegroundColor Yellow
+        Write-Host "     2) 点『Generate new token』→『Generate new token (classic)』"
+        Write-Host "     3) Note 随便填(如 git),Expiration 选『No expiration』"
+        Write-Host "     4) 勾上『repo』这一整栏(上传需要的权限)"
+        Write-Host "     5) 拉到最下面点绿色『Generate token』"
+        Write-Host "     6) 复制那串 ghp_ 开头的字符(只显示这一次)"
+        Write-Host "     7) 回到这里:Username 随便填,Password 粘贴那串(不显示是正常的,直接回车)"
         & git -C $repo push -u origin $branch | Out-Host
     } else {
         & git -C $repo push | Out-Host
@@ -526,10 +535,12 @@ function Upload-Folder([string]$folder, $repos, [string[]]$rules) {
 
     if ($mode -eq 'copy') {
         $srcRules = @($rules) + @(Get-GitIgnorePatterns $folder)
-        $allFiles = Get-Files $folder $srcRules
+        $walk = Get-Files $folder $srcRules
+        $allFiles = $walk.Files
         $included = @(); $excluded = @()
         foreach ($f in $allFiles) { if (Match-Rule $f.Rel $srcRules) { $excluded += $f } else { $included += $f } }
         Info ("方式:复制到 -> " + $target.Dest)
+        if ($walk.SkippedDirs.Count -gt 0) { Info ("已整体跳过的目录:" + (($walk.SkippedDirs | Sort-Object -Unique) -join ' ')) }
         Info ("要上传的核心文件:" + $included.Count + " 个    已跳过(测试/构建/密钥等):" + $excluded.Count + " 个")
         $shown = [Math]::Min(30, $excluded.Count)
         if ($shown -gt 0) {

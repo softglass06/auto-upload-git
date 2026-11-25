@@ -1,3 +1,6 @@
+# 请用 UTF-8 编码保存本文件;改完重新打开工具即可生效。
+# 本文件是「首次运行」时复制到 %APPDATA%\auto-upload-git\ 的模板,
+# 之后工具读的是那个副本(菜单 [5] 里打开的也是副本)。
 # ---- directories to skip (trailing / means the whole directory) ----
 node_modules/
 __pycache__/

@@ -99,7 +99,21 @@
 - **推送失败提示「远程仓库不是空的」?** 说明建仓库时勾了 README 等选项。去 GitHub 删掉该仓库,重新建一个空的(三个复选框都不勾)再试。
 - **`repos.txt` 会泄露我的路径吗?** 不会。这个文件已被 `.gitignore` 忽略,不会被提交上传。
 - **第一次提交提示我设置名字/邮箱?** 是的,全新电脑上 git 没配置过身份,提交会失败。工具会在第一次使用时引导你输入一次,以后就不用再设。
-- **推送时弹出浏览器或要密码?** 首次推送 GitHub 会要求登录,浏览器会自动弹出;如果出现「Username / Password」,去 GitHub → Settings → Developer settings → Personal access tokens 生成一个 Token,当密码粘贴即可(不要再填账号密码,GitHub 已停用)。
+- **推送时弹出浏览器或要密码?** 首次推送 GitHub 会要求登录。通常浏览器会自动弹出,点「Authorize」登录即可。如果黑框里出现「Username / Password」(没弹浏览器),就要用「访问令牌(PAT)」当密码(不要再填账号密码,GitHub 已停用):
+  1. 浏览器打开 `https://github.com/settings/tokens`
+  2. 点「Generate new token」→「Generate new token (classic)」
+  3. Note 随便填(如 git),Expiration 选「No expiration」
+  4. 勾上「repo」整栏(上传所需权限)
+  5. 拉到最下面点绿色「Generate token」
+  6. 复制那串 `ghp_` 开头的字符(只显示这一次)
+  7. 回到黑框:Username 随便填,Password 粘贴那串(不显示是正常的,回车即可)
 - **推上去了,但 GitHub 页面看着还是空的?** 可能是默认分支对不上。点仓库左上角的分支下拉,把默认分支设成 `main`(或你推送的那个分支名)即可。
 - **`.env`、密钥文件会被传上去吗?** 不会。默认过滤规则已经挡住 `.env`、`*.key`、`*.pem`、`id_rsa*` 等,避免把密码/密钥传上 GitHub。
 - **拉取时提示「冲突」?** 说明你和别人改了同一处。工具会给你两个选择:输入 `a` 撤销这次拉取恢复原样(推荐),或输入 `k` 自己打开冲突文件手动合并。
+
+## 开发者备忘(给维护这个工具的人)
+
+- **改完 `upload.ps1` 必须重新打包 `upload.exe`**,否则新手双击的还是旧版:
+  `ps2exe -inputFile upload.ps1 -outputFile upload.exe -STA`
+- **`filter-rules.txt` 的默认规则只在首次运行时复制到 `%APPDATA%`**;已装过的用户不会自动拿到新增规则,改规则时要在发布说明里提醒用户手动同步(菜单 [5])。
+- `upload.ps1` 必须保持 **UTF-8 带 BOM**;`upload.cmd` 必须保持 **ASCII + CRLF**(详见上文常见问题)。
